@@ -13,6 +13,8 @@ from mappings import map_nws_product_to_hass_severity, map_nws_product_code_to_d
 import paho.mqtt.client as mqtt
 import os
 import logging
+from version import __version__
+
 
 # These lines are so Flask shuts the fuck up in the console so I can see wtf is happening
 log = logging.getLogger('werkzeug')
@@ -21,24 +23,8 @@ log.setLevel(logging.ERROR)
 # Configure logging for main threads
 logging.basicConfig(filename='log.txt', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Report last modified datetime of this app.py file to console as versioning information
-def get_last_modified_time(file_path):
-    try:
-        # Get the last modified timestamp of the file
-        modified_time = os.path.getmtime(file_path)
-        # Convert the timestamp to UTC
-        utc_time = datetime.fromtimestamp(modified_time, timezone.utc)
-        # Format the UTC timestamp as a string
-        utc_readable_time = utc_time.strftime('%Y-%m-%d_%H-%M-%S')
-        return utc_readable_time
-    except OSError as e:
-        print(f"Error: {e}")
-        return "unknown"
-
 # Log initialization stuff
-file_path = 'app.py'
-app_version = get_last_modified_time(file_path)
-logging.info(f"Version Key: {app_version}")
+logging.info(f"Version Key: {__version__}")
 
 # Check if both command-line arguments are provided
 if len(sys.argv) != 3:
@@ -311,10 +297,7 @@ def send_to_hass_mqtt(topic, text):
         logging.error(f"MQTT Error: {e}")
 
 if __name__ == '__main__':
-    file_path = 'app.py'
-    last_modified = get_last_modified_time(file_path)
-    if last_modified:
-        print(f"\n\nVersion Key: \n\n\t\033[92m{last_modified}\033[0m\n\t({file_path} last modified UTC)\n\n")
+    print(f"\n\nVersion Key: \n\n\t\033[92m{__version__}\033[0m\n\n")
     for feed_name, url in FEED_URLS.items():
         thread = threading.Thread(target=fetch_and_update_feed, args=(feed_name, url))
         thread.daemon = True
