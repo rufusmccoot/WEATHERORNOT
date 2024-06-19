@@ -12,23 +12,45 @@ import re
 from mappings import map_nws_product_to_hass_severity, map_nws_product_code_to_description
 import paho.mqtt.client as mqtt
 import os
+import logging
 
 # These lines are so Flask shuts the fuck up in the console so I can see wtf is happening
-import logging
 log = logging.getLogger('werkzeug')
-log.setLevel(logging.WARNING)
+log.setLevel(logging.ERROR)
 
+# Configure logging for main threads
+logging.basicConfig(filename='log.txt', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Report last modified datetime of this app.py file to console as versioning information
+def get_last_modified_time(file_path):
+    try:
+        # Get the last modified timestamp of the file
+        modified_time = os.path.getmtime(file_path)
+        # Convert the timestamp to UTC
+        utc_time = datetime.fromtimestamp(modified_time, timezone.utc)
+        # Format the UTC timestamp as a string
+        utc_readable_time = utc_time.strftime('%Y-%m-%d_%H-%M-%S')
+        return utc_readable_time
+    except OSError as e:
+        print(f"Error: {e}")
+        return "unknown"
+
+# Log initialization stuff
+file_path = 'app.py'
+app_version = get_last_modified_time(file_path)
+logging.info(f"Version Key: {app_version}")
 
 # Check if both command-line arguments are provided
 if len(sys.argv) != 3:
     print("")
     print("ERROR: You need to pass two IEMBOT ids as parameters")
     print("")
-    print("     Example: 'python app.py dvn tbw'")
+    print("     Example: 'python app.py tbw mlb'")
     print("")
-    print("     Result: Davenport IEMBOT on left side, Tampa IEMBOT on the right")
+    print("     Result: Tampa IEMBOT on left side, Melbourne IEMBOT on the right")
     print("")
     print("You can find a list of valid IEMBOT ids at https://weather.im/iembot/")
+    logging.error(f"app.py called without appropriate parameters as in 'python app.py tbw mlb'")
     sys.exit(1)
 
 config = configparser.ConfigParser()
@@ -47,6 +69,8 @@ mqttclient = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 # Extract IEMBOT ids from command-line arguments
 leftchat = sys.argv[1]
 rightchat = sys.argv[2]
+
+logging.info(f"Left Chat: {leftchat} | Right Chat: {rightchat}")
 
 # Define the base URLs
 BASE_URL = 'https://weather.im/iembot-rss/room/'
@@ -137,8 +161,10 @@ def fetch_and_update_feed(feed_name, url):
                     send_to_hass_mqtt(mqtt_topicright, payload_for_mqtt)
         except requests.RequestException as e:
             print(f"{generate_timestamp_for_console()}\033[31m Error fetching the feed {feed_name}: {e}{reset_color}")
+            logging.error(f"Error fetching the feed {feed_name}: {e}")
         except ET.ParseError as e:
             print(f"{generate_timestamp_for_console()}\033[31m Error parsing the XML {feed_name}: {e}{reset_color}")
+            logging.error(f"Error parsing the XML {feed_name}: {e}")
         time.sleep(INTERVAL)
 
 def fetch_cow_stats(wfo=None, phenomena=None, callback=None):
@@ -172,17 +198,22 @@ def index():
 
 @app.route('/feed/<feed_name>', methods=['GET'])
 def get_feed(feed_name):
-    page = int(request.args.get('page', 1))
-    per_page = 10
-    start = (page - 1) * per_page
-    end = start + per_page
-    items = data_store.get(feed_name, {}).get('items', [])
-    last_update_time = data_store.get(feed_name, {}).get('last_update_time', None)
-    return jsonify({
-        'items': items[start:end],
-        'total': len(items),
-        'last_update_time': last_update_time
-    })
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = 10
+        start = (page - 1) * per_page
+        end = start + per_page
+        items = data_store.get(feed_name, {}).get('items', [])
+        last_update_time = data_store.get(feed_name, {}).get('last_update_time', None)
+        return jsonify({
+            'items': items[start:end],
+            'total': len(items),
+            'last_update_time': last_update_time
+        })
+    except Exception as e:
+        error_message = f"Error fetching feed '{feed_name}': {e}"
+        logging.error(error_message)
+        return jsonify({'error': error_message}), 500
 
 @app.route('/set_mode/<mode>')
 def set_mode(mode):
@@ -259,41 +290,25 @@ def identify_nws_product_severity(nws_product_description, feed_name):
         print(f"{generate_timestamp_for_console()} {generate_LR_coloring_for_console(feed_name)} [Discovered] Office: \"{ul_start}{third_line_second_three_characters}{ul_end}\" Prod: \"{ul_start}{third_line_first_three_chars}{ul_end}\" Desc: \"{ul_start}NOT IN DICTIONARY{ul_end}\" Sev: \"{ul_start}info (assumed){ul_end}\"{reset_color}")
     return severity_from_dictionary
 
-
 def send_to_hass_mqtt(topic, text):
     try:
         mqttclient = mqtt.Client()
         mqttclient.username_pw_set(mqtt_user, mqtt_pass)
-
         def on_connect(mqttclient, userdata, flags, rc):
             if rc == 0:
                 mqttclient.publish(topic, '{"payload":"' + text + '"}')
                 mqttclient.disconnect()
             else:
                 print(f"Connection failed with code {rc}")
-
+                logging.error(f"MQTT Connection failed with code {rc}")
         mqttclient.on_connect = on_connect
         mqttclient.connect(mqtt_broker, mqtt_port, 60)
         mqttclient.loop_start()
         time.sleep(2)
         mqttclient.loop_stop()
-        
     except Exception as e:
-        print(f"An error occurred: {e}")
-
-# Report last mondified datetime of this app.py file to console as versioning information
-def get_last_modified_time(file_path):
-    try:
-        # Get the last modified timestamp of the file
-        modified_time = os.path.getmtime(file_path)
-        # Convert the timestamp to UTC
-        utc_time = datetime.fromtimestamp(modified_time, timezone.utc)
-        # Format the UTC timestamp as a string
-        utc_readable_time = utc_time.strftime('%Y-%m-%d_%H-%M-%S')
-        return utc_readable_time
-    except OSError as e:
-        print(f"Error: {e}")
-        return "unknown"
+        print(f"MQTT Error: {e}")
+        logging.error(f"MQTT Error: {e}")
 
 if __name__ == '__main__':
     file_path = 'app.py'
