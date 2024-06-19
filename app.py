@@ -11,6 +11,7 @@ import json
 import re
 from mappings import map_nws_product_to_hass_severity, map_nws_product_code_to_description
 import paho.mqtt.client as mqtt
+import os
 
 # These lines are so Flask shuts the fuck up in the console so I can see wtf is happening
 import logging
@@ -72,8 +73,8 @@ data_store = {
     'rightchat': {'items': [], 'last_update_time': None}
 }
 
-colorL = "\033[96m" #color for console messages related to leftchat
-colorR = "\033[94m" #color for console messages related to rightchat
+colorL = "\033[33m" #"\033[96m" #color for console messages related to leftchat
+colorR = "\033[35m" #"\033[94m" #color for console messages related to rightchat
 reset_color = '\033[0m'  # resets color to default
 ul_start = '\033[4m'  # Start underline
 ul_end = '\033[24m'  # End underline
@@ -258,21 +259,47 @@ def identify_nws_product_severity(nws_product_description, feed_name):
         print(f"{generate_timestamp_for_console()} {generate_LR_coloring_for_console(feed_name)} [Discovered] Office: \"{ul_start}{third_line_second_three_characters}{ul_end}\" Prod: \"{ul_start}{third_line_first_three_chars}{ul_end}\" Desc: \"{ul_start}NOT IN DICTIONARY{ul_end}\" Sev: \"{ul_start}info (assumed){ul_end}\"{reset_color}")
     return severity_from_dictionary
 
+
 def send_to_hass_mqtt(topic, text):
-    mqttclient = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
-    mqttclient.username_pw_set(mqtt_user, mqtt_pass)
+    try:
+        mqttclient = mqtt.Client()
+        mqttclient.username_pw_set(mqtt_user, mqtt_pass)
 
-    def on_connect(mqttclient, userdata, flags, rc):
-        mqttclient.publish(topic, '{"payload":"' + text + '"}')
-        mqttclient.disconnect()
+        def on_connect(mqttclient, userdata, flags, rc):
+            if rc == 0:
+                mqttclient.publish(topic, '{"payload":"' + text + '"}')
+                mqttclient.disconnect()
+            else:
+                print(f"Connection failed with code {rc}")
 
-    mqttclient.on_connect = on_connect
-    mqttclient.connect(mqtt_broker, mqtt_port, 60)
-    mqttclient.loop_start()
-    time.sleep(2)
-    mqttclient.loop_stop()
+        mqttclient.on_connect = on_connect
+        mqttclient.connect(mqtt_broker, mqtt_port, 60)
+        mqttclient.loop_start()
+        time.sleep(2)
+        mqttclient.loop_stop()
+        
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+# Report last mondified datetime of this app.py file to console as versioning information
+def get_last_modified_time(file_path):
+    try:
+        # Get the last modified timestamp of the file
+        modified_time = os.path.getmtime(file_path)
+        # Convert the timestamp to UTC
+        utc_time = datetime.fromtimestamp(modified_time, timezone.utc)
+        # Format the UTC timestamp as a string
+        utc_readable_time = utc_time.strftime('%Y-%m-%d_%H-%M-%S')
+        return utc_readable_time
+    except OSError as e:
+        print(f"Error: {e}")
+        return "unknown"
 
 if __name__ == '__main__':
+    file_path = 'app.py'
+    last_modified = get_last_modified_time(file_path)
+    if last_modified:
+        print(f"\n\nVersion Key: \n\n\t\033[92m{last_modified}\033[0m\n\t({file_path} last modified UTC)\n\n")
     for feed_name, url in FEED_URLS.items():
         thread = threading.Thread(target=fetch_and_update_feed, args=(feed_name, url))
         thread.daemon = True
